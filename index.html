@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ringue da Live</title>
+<style>
+  :root { --a:#e53935; --b:#1e88e5; --pele:#f1c27d; --gold:#ffd600; }
+  html,body { margin:0; height:100%; overflow:hidden; font-family:Impact,'Arial Black',sans-serif; color:#fff; }
+  body { background:#14141a; }
+  body.transp { background:transparent; }
+  #stage { position:relative; width:100vw; height:100vh; }
+
+  .hud { position:absolute; top:2vh; left:3vw; right:3vw; display:flex; gap:3vw; align-items:center; z-index:2; }
+  .side { flex:1; min-width:0; }
+  .side.b { text-align:right; }
+  .nome { font-size:clamp(16px,5.5vw,48px); text-shadow:2px 2px 0 #000; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .vit { font-size:clamp(11px,3.2vw,26px); color:var(--gold); text-shadow:1px 1px 0 #000; }
+  .bar { height:clamp(12px,3vh,28px); background:#222; border:3px solid #fff; border-radius:8px; overflow:hidden; display:flex; }
+  .fill { height:100%; width:100%; transition:width .2s; }
+  .a .fill { background:var(--a); }
+  .b .bar { justify-content:flex-end; }
+  .b .fill { background:var(--b); }
+  .vs { font-size:clamp(22px,8vw,70px); color:var(--gold); text-shadow:3px 3px 0 #000; }
+
+  svg { position:absolute; left:0; bottom:0; width:100%; height:80%; }
+  .soco, .corpo { transform-box:view-box; }
+  .soco.on { animation:soco .26s ease-out; }
+  @keyframes soco { 0%{transform:translateX(0)} 40%{transform:translateX(58px)} 100%{transform:translateX(0)} }
+  .corpo.hit { animation:hit .3s ease-out; }
+  @keyframes hit { 0%,100%{transform:translateX(0) rotate(0)} 30%{transform:translateX(-14px) rotate(-7deg)} 60%{transform:translateX(-6px) rotate(-3deg)} }
+  .corpo.ko { transform:rotate(-82deg); transition:transform .5s ease-in; }
+
+  .pow { position:absolute; z-index:3; pointer-events:none; text-align:center; transform:translate(-50%,-50%); animation:pow .7s ease-out forwards; }
+  .pow b { display:block; font-size:clamp(26px,9vw,80px); color:var(--gold); -webkit-text-stroke:2px #000; text-shadow:3px 3px 0 #000; }
+  .pow span { font-family:Arial,sans-serif; font-weight:bold; font-size:clamp(11px,3.4vw,26px); background:rgba(0,0,0,.6); padding:2px 8px; border-radius:6px; }
+  @keyframes pow { 0%{opacity:0; transform:translate(-50%,-50%) scale(.4)} 20%{opacity:1; transform:translate(-50%,-50%) scale(1.15)} 100%{opacity:0; transform:translate(-50%,-90%) scale(1)} }
+
+  #banner { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:4; pointer-events:none; opacity:0; transition:opacity .3s; }
+  #banner.on { opacity:1; }
+  #banner div { font-size:clamp(28px,10vw,90px); color:var(--gold); -webkit-text-stroke:2px #000; text-shadow:4px 4px 0 #000; text-align:center; padding:0 4vw; }
+
+  #status { position:absolute; left:2vw; bottom:1vh; z-index:5; font:12px Arial,sans-serif; background:rgba(0,0,0,.55); padding:3px 8px; border-radius:6px; transition:opacity 1s; }
+  #teste { position:absolute; left:0; right:0; bottom:5vh; display:flex; justify-content:center; gap:10px; z-index:6; }
+  #teste button { font:bold 16px Arial,sans-serif; color:#fff; border:0; border-radius:10px; padding:12px 18px; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="hud">
+    <div class="side a">
+      <div class="nome" id="nomeA">VERMELHO</div>
+      <div class="bar"><div class="fill" id="hpA"></div></div>
+      <div class="vit" id="vitA">0 vitórias</div>
+    </div>
+    <div class="vs">VS</div>
+    <div class="side b">
+      <div class="nome" id="nomeB">AZUL</div>
+      <div class="bar"><div class="fill" id="hpB"></div></div>
+      <div class="vit" id="vitB">0 vitórias</div>
+    </div>
+  </div>
+
+  <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMax meet">
+    <!-- ringue -->
+    <polygon points="20,300 380,300 350,240 50,240" fill="#3b6fb6"/>
+    <polygon points="50,240 350,240 340,232 60,232" fill="#2a4f86"/>
+    <rect x="44" y="140" width="8" height="105" fill="#ccc"/>
+    <rect x="348" y="140" width="8" height="105" fill="#ccc"/>
+    <line x1="48" y1="155" x2="352" y2="155" stroke="#e53935" stroke-width="3"/>
+    <line x1="48" y1="185" x2="352" y2="185" stroke="#fff" stroke-width="3"/>
+    <line x1="48" y1="215" x2="352" y2="215" stroke="#1e88e5" stroke-width="3"/>
+
+    <!-- Lutador A (vermelho), virado pra direita -->
+    <g id="fa" transform="translate(150,262)">
+      <g class="corpo">
+        <rect x="-16" y="-55" width="12" height="55" rx="4" fill="var(--pele)"/>
+        <rect x="4" y="-55" width="12" height="55" rx="4" fill="var(--pele)"/>
+        <rect x="-21" y="-74" width="42" height="24" rx="5" fill="var(--a)"/>
+        <rect x="-19" y="-132" width="38" height="62" rx="12" fill="var(--pele)"/>
+        <circle cx="-14" cy="-112" r="12" fill="var(--a)" stroke="#000" stroke-width="2"/>
+        <circle cx="0" cy="-156" r="22" fill="var(--pele)"/>
+        <rect x="-22" y="-166" width="44" height="7" fill="var(--a)"/>
+        <circle cx="9" cy="-155" r="3" fill="#000"/>
+        <path d="M4,-144 q6,4 12,0" stroke="#000" stroke-width="2" fill="none"/>
+        <g class="soco">
+          <rect x="8" y="-124" width="30" height="10" rx="4" fill="var(--pele)"/>
+          <circle cx="42" cy="-119" r="14" fill="var(--a)" stroke="#000" stroke-width="2"/>
+        </g>
+      </g>
+    </g>
+
+    <!-- Lutador B (azul), espelhado -->
+    <g id="fb" transform="translate(250,262) scale(-1,1)">
+      <g class="corpo">
+        <rect x="-16" y="-55" width="12" height="55" rx="4" fill="#c68c53"/>
+        <rect x="4" y="-55" width="12" height="55" rx="4" fill="#c68c53"/>
+        <rect x="-21" y="-74" width="42" height="24" rx="5" fill="var(--b)"/>
+        <rect x="-19" y="-132" width="38" height="62" rx="12" fill="#c68c53"/>
+        <circle cx="-14" cy="-112" r="12" fill="var(--b)" stroke="#000" stroke-width="2"/>
+        <circle cx="0" cy="-156" r="22" fill="#c68c53"/>
+        <rect x="-22" y="-166" width="44" height="7" fill="var(--b)"/>
+        <circle cx="9" cy="-155" r="3" fill="#000"/>
+        <path d="M4,-144 q6,4 12,0" stroke="#000" stroke-width="2" fill="none"/>
+        <g class="soco">
+          <rect x="8" y="-124" width="30" height="10" rx="4" fill="#c68c53"/>
+          <circle cx="42" cy="-119" r="14" fill="var(--b)" stroke="#000" stroke-width="2"/>
+        </g>
+      </g>
+    </g>
+  </svg>
+
+  <div id="banner"><div id="bannerTxt"></div></div>
+  <div id="status">conectando...</div>
+  <div id="teste" hidden>
+    <button style="background:var(--a)" onclick="soco('a','teste')">Soco vermelho</button>
+    <button style="background:var(--b)" onclick="soco('b','teste')">Soco azul</button>
+  </div>
+</div>
+
+<script>
+const P = new URLSearchParams(location.search);
+const NOME = { a: P.get('a') || 'VERMELHO', b: P.get('b') || 'AZUL' };
+const DANO = Math.max(1, +P.get('dano') || 5);           // % de vida por soco
+const $ = id => document.getElementById(id);
+$('nomeA').textContent = NOME.a;
+$('nomeB').textContent = NOME.b;
+if (P.get('fundo') === '0') document.body.classList.add('transp');
+if (P.has('teste')) $('teste').hidden = false;
+
+let hp = { a:100, b:100 }, vit = { a:0, b:0 };
+let fila = [], ocupado = false, travado = false;
+
+function reiniciarAnim(el, cls) { el.classList.remove(cls); void el.getBoundingClientRect(); el.classList.add(cls); }
+
+function atualiza() {
+  $('hpA').style.width = hp.a + '%';
+  $('hpB').style.width = hp.b + '%';
+  $('vitA').textContent = vit.a + (vit.a === 1 ? ' vitória' : ' vitórias');
+  $('vitB').textContent = vit.b + (vit.b === 1 ? ' vitória' : ' vitórias');
+}
+
+function pow(alvo, quem) {
+  const d = document.createElement('div');
+  d.className = 'pow';
+  d.style.left = (alvo === 'a' ? 38 : 62) + '%';
+  d.style.top = '42%';
+  const b = document.createElement('b'); b.textContent = ['POW!','BAM!','PÁ!','TUM!'][Math.random()*4|0];
+  d.appendChild(b);
+  if (quem) { const s = document.createElement('span'); s.textContent = '@' + quem; d.appendChild(s); }
+  $('stage').appendChild(d);
+  setTimeout(() => d.remove(), 750);
+}
+
+function soco(lado, quem) {
+  fila.push({ lado, quem });
+  if (fila.length > 60) fila.splice(0, fila.length - 60);
+  rodar();
+}
+
+function rodar() {
+  if (ocupado || travado || !fila.length) return;
+  ocupado = true;
+  const { lado, quem } = fila.shift();
+  const alvo = lado === 'a' ? 'b' : 'a';
+  reiniciarAnim(document.querySelector('#f' + lado + ' .soco'), 'on');
+  setTimeout(() => {
+    reiniciarAnim(document.querySelector('#f' + alvo + ' .corpo'), 'hit');
+    pow(alvo, quem);
+    hp[alvo] = Math.max(0, hp[alvo] - DANO);
+    atualiza();
+    if (hp[alvo] === 0) ko(lado, alvo);
+  }, 110);
+  setTimeout(() => { ocupado = false; rodar(); }, 300);
+}
+
+function ko(vencedor, perdedor) {
+  travado = true;
+  vit[vencedor]++;
+  const c = document.querySelector('#f' + perdedor + ' .corpo');
+  c.classList.remove('hit'); c.classList.add('ko');
+  $('bannerTxt').textContent = 'K.O.! ' + NOME[vencedor] + ' VENCEU!';
+  $('banner').classList.add('on');
+  atualiza();
+  setTimeout(() => {
+    $('banner').classList.remove('on');
+    c.classList.remove('ko');
+    hp = { a:100, b:100 };
+    atualiza();
+    travado = false;
+    rodar();
+  }, 3500);
+}
+
+function status(t) {
+  const s = $('status');
+  s.textContent = t; s.style.opacity = 1;
+  clearTimeout(status.t);
+  status.t = setTimeout(() => s.style.opacity = 0, 8000);
+}
+
+function conectar() {
+  if (!/^https?:$/.test(location.protocol)) return;
+  const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host);
+  ws.onmessage = e => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.tipo === 'soco') for (let i = 0; i < Math.min(m.qtd || 1, 30); i++) soco(m.lado, m.quem);
+    if (m.tipo === 'status') status(m.texto);
+  };
+  ws.onclose = () => { status('reconectando...'); setTimeout(conectar, 3000); };
+}
+
+// Se a página não estiver rodando no servidor (ex.: prévia), mostra os botões de teste
+fetch('/saude').then(r => r.text()).then(t => { if (t !== 'ok') throw 0; conectar(); })
+  .catch(() => { $('teste').hidden = false; status('modo teste (sem servidor)'); });
+
+atualiza();
+</script>
+</body>
+</html>
