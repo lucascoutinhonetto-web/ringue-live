@@ -1,99 +1,125 @@
 // Ringue da Live — escuta os presentes do TikTok LIVE e manda socos pra tela do ringue.
+// Tudo na mesma pasta: server.js, package.json, index.html, vermelho.png, verde.png
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
-const TTL = require('tiktok-live-connector');
+const { TikTokLiveConnection, WebcastEvent, ControlEvent } = require('tiktok-live-connector');
 
-// ===== CONFIGURAÇÃO (variáveis de ambiente) =====
-const USUARIO = (process.env.TIKTOK_USER || '').replace('@', '');   // seu @ do TikTok, sem o @
-const GIFTS_A = lista(process.env.GIFTS_A || 'Rose,5655');                // presentes que fazem o lado A (vermelho) socar
-const GIFTS_B = lista(process.env.GIFTS_B || '');                    // presentes do lado B (azul). Vazio = qualquer outro presente
+// ===== CONFIGURAÇÃO (variáveis de ambiente no site de hospedagem) =====
+const USUARIO = (process.env.TIKTOK_USER || '').replace('@', '').trim(); // seu @ sem o @
+const GIFTS_A = lista(process.env.GIFTS_A || 'Rose,5655');  // presentes do VERMELHO (nome ou ID)
+const GIFTS_B = lista(process.env.GIFTS_B || '');           // presentes do VERDE. Vazio = qualquer outro
 const PORTA = process.env.PORT || 3000;
 
 function lista(s) { return s.split(',').map(x => x.trim().toLowerCase()).filter(Boolean); }
 
-// ===== Servidor web (serve a tela do ringue) =====
+// ===== Servidor web: entrega os arquivos da MESMA pasta =====
+const TIPOS = { '.html': 'text/html; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp' };
+const PERMITIDOS = ['index.html', 'vermelho.png', 'verde.png', 'vermelho.webp', 'verde.webp', 'fundo.jpg'];
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
-  if (url.pathname === '/saude') return res.end('ok');
-  if (url.pathname === '/soco') {                // teste: /soco?lado=a  ou  /soco?lado=b
-    enviar({ tipo: 'soco', lado: url.searchParams.get('lado') === 'b' ? 'b' : 'a', qtd: 1, quem: 'teste' });
-    return res.end('soco enviado');
+  const p = url.pathname;
+
+  if (p === '/saude') return res.end('ok');
+  if (p === '/status') return res.end(JSON.stringify({ usuario: USUARIO, estado }));
+  if (p === '/soco') { // teste manual: /soco?lado=a  ou  /soco?lado=b
+    const lado = url.searchParams.get('lado') === 'b' ? 'b' : 'a';
+    enviar({ tipo: 'soco', lado, qtd: 1, quem: 'teste', presente: 'teste' });
+    return res.end('soco ' + lado);
   }
-  fs.readFile(path.join(__dirname, 'index.html'), (err, html) => {
-    if (err) { res.statusCode = 500; return res.end('erro'); }
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.end(html);
+
+  const arq = p === '/' ? 'index.html' : path.basename(p);
+  if (!PERMITIDOS.includes(arq)) { res.statusCode = 404; return res.end('nao achei'); }
+  fs.readFile(path.join(__dirname, arq), (err, dados) => {
+    if (err) { res.statusCode = 404; return res.end('nao achei ' + arq); }
+    res.setHeader('Content-Type', TIPOS[path.extname(arq)] || 'application/octet-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.end(dados);
   });
 });
 
+// ===== WebSocket: liga o servidor à tela do ringue =====
 const wss = new WebSocketServer({ server });
-let ultimoStatus = 'iniciando...';
-wss.on('connection', ws => ws.send(JSON.stringify({ tipo: 'status', texto: ultimoStatus })));
-function enviar(msg) {
-  const s = JSON.stringify(msg);
-  wss.clients.forEach(c => c.readyState === 1 && c.send(s));
+let estado = 'iniciando';
+
+function enviar(obj) {
+  const msg = JSON.stringify(obj);
+  wss.clients.forEach(c => { if (c.readyState === 1) c.send(msg); });
 }
-function status(t) { ultimoStatus = t; console.log(t); enviar({ tipo: 'status', texto: t }); }
+function status(texto) { estado = texto; console.log('[status]', texto); enviar({ tipo: 'status', texto }); }
 
-server.listen(PORTA, () => console.log('Ringue rodando na porta ' + PORTA));
+wss.on('connection', ws => ws.send(JSON.stringify({ tipo: 'status', texto: estado })));
+// ping a cada 25s pra conexão não cair por inatividade
+setInterval(() => wss.clients.forEach(c => { try { c.ping(); } catch {} }), 25000);
 
-// ===== Conexão com o TikTok LIVE =====
-function ladoDoPresente(nome) {
-  const n = (nome || '').toLowerCase();
-  if (GIFTS_A.includes(n)) return 'a';
-  if (GIFTS_B.length === 0 || GIFTS_B.includes(n)) return 'b';
+// ===== TikTok: conecta e reconecta SEM duplicar =====
+let conn = null;
+let timerReconexao = null;
+let conectando = false;
+
+function agendar(segundos, motivo) {
+  if (timerReconexao) return;           // já tem uma reconexão marcada → não duplica
+  status(`${motivo} Tentando de novo em ${segundos}s...`);
+  timerReconexao = setTimeout(() => { timerReconexao = null; conectarTikTok(); }, segundos * 1000);
+}
+
+function limparConexao() {
+  if (!conn) return;
+  try { conn.removeAllListeners(); } catch {}
+  try { conn.disconnect(); } catch {}
+  conn = null;
+}
+
+async function conectarTikTok() {
+  if (!USUARIO) return status('Falta configurar TIKTOK_USER no site de hospedagem.');
+  if (conectando) return;
+  conectando = true;
+  limparConexao();
+
+  conn = new TikTokLiveConnection(USUARIO, { processInitialData: false });
+  conn.on(WebcastEvent.GIFT, aoPresente);
+  conn.on(WebcastEvent.STREAM_END, () => { limparConexao(); agendar(30, 'Live encerrada.'); });
+  conn.on(ControlEvent.DISCONNECTED, () => { limparConexao(); agendar(10, 'Desconectou.'); });
+  conn.on(ControlEvent.ERROR, e => console.log('[erro]', e?.info || e?.message || e));
+
+  try {
+    status(`Procurando a live de @${USUARIO}...`);
+    const info = await conn.connect();
+    status(`Conectado na live de @${USUARIO}`);
+    console.log('roomId', info?.roomId);
+  } catch (e) {
+    console.log('[falha]', e?.message || e);
+    limparConexao();
+    agendar(30, `@${USUARIO} não está ao vivo ainda.`);
+  } finally {
+    conectando = false;
+  }
+}
+
+function ladoDoPresente(nome, id) {
+  const n = String(nome).toLowerCase(), i = String(id);
+  if (GIFTS_A.includes(n) || GIFTS_A.includes(i)) return 'a';
+  if (GIFTS_B.length === 0) return 'b';
+  if (GIFTS_B.includes(n) || GIFTS_B.includes(i)) return 'b';
   return null;
 }
 
 function aoPresente(d) {
-  // Presentes em sequência (combo): só conta quando o combo termina
   const tipo = d.giftDetails?.giftType ?? d.giftType;
-  if (tipo === 1 && !d.repeatEnd) return;
+  if (tipo === 1 && !d.repeatEnd) return;           // combo ainda rolando: espera terminar
   const nome = d.giftDetails?.giftName || d.giftName || '';
-  // aceita nome do presente ou o ID (ex.: Rosa = 5655)
-  const lado = ladoDoPresente(nome) === 'a' || GIFTS_A.includes(String(d.giftId)) ? 'a'
-             : (GIFTS_B.includes(String(d.giftId)) ? 'b' : ladoDoPresente(nome));
+  const lado = ladoDoPresente(nome, d.giftId);
   if (!lado) return;
-  const qtd = Math.max(1, d.repeatCount || 1);
-  const quem = d.uniqueId || d.user?.uniqueId || '';
-  console.log(`🎁 ${quem} mandou ${qtd}x ${nome} → lado ${lado.toUpperCase()}`);
-  enviar({ tipo: 'soco', lado, qtd, quem });
+  const qtd = Math.min(Math.max(d.repeatCount || 1, 1), 50);
+  const quem = d.user?.nickname || d.user?.uniqueId || d.nickname || d.uniqueId || '';
+  console.log(`[presente] ${quem} -> ${nome} x${qtd} (lado ${lado})`);
+  enviar({ tipo: 'soco', lado, qtd, quem, presente: nome });
 }
 
-let timerReconexao = null;
-function agendar(seg) {
-  if (timerReconexao) return;
-  timerReconexao = setTimeout(() => { timerReconexao = null; conectarTikTok(); }, seg * 1000);
-}
+// Nunca deixa o servidor morrer por erro inesperado
+process.on('uncaughtException', e => { console.log('[crash evitado]', e?.message); agendar(15, 'Erro inesperado.'); });
+process.on('unhandledRejection', e => { console.log('[crash evitado]', e?.message || e); });
 
-function conectarTikTok() {
-  if (!USUARIO) return status('Defina TIKTOK_USER (seu @ do TikTok)');
-
-  // Compatível com a versão nova (TikTokLiveConnection) e a antiga (WebcastPushConnection)
-  const Classe = TTL.TikTokLiveConnection || TTL.WebcastPushConnection;
-  const conn = new Classe(USUARIO, {});
-  const EV = TTL.WebcastEvent || {};
-  const evGift = EV.GIFT || 'gift';
-  const evFim = EV.STREAM_END || 'streamEnd';
-
-  conn.connect()
-    .then(() => status('Conectado na live de @' + USUARIO + ' ✅'))
-    .catch(e => {
-      status('Live de @' + USUARIO + ' não encontrada. Tentando de novo em 30s...');
-      console.log(e?.message || e?.info || e);
-      agendar(30);
-    });
-
-  conn.on('error', e => console.log('Erro TikTok:', e?.info || e?.message || e));
-  conn.on(evGift, aoPresente);
-  conn.on(evFim, () => { status('Live encerrada. Aguardando...'); agendar(30); });
-  conn.on('disconnected', () => { status('Desconectou. Reconectando em 15s...'); agendar(15); });
-}
-
-// Nunca deixa o servidor cair por erro inesperado
-process.on('uncaughtException', e => console.log('Erro:', e?.message || e));
-process.on('unhandledRejection', e => console.log('Erro:', e?.message || e));
-
-conectarTikTok();
+server.listen(PORTA, () => { console.log('Ringue rodando na porta', PORTA); conectarTikTok(); });

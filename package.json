@@ -1,16 +1,12 @@
 {
   "name": "ringue-live",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Ringue de boxe que reage aos presentes da live do TikTok",
   "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
   "dependencies": {
-    "tiktok-live-connector": "^2.0.0",
+    "tiktok-live-connector": "^2.5.0",
     "ws": "^8.18.0"
   }
 }
